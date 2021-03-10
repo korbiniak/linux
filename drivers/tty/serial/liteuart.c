@@ -248,6 +248,7 @@ static int liteuart_probe(struct platform_device *pdev)
 	struct liteuart_port *uart;
 	struct uart_port *port;
 	struct xa_limit limit;
+	struct resource *res;
 	int dev_id, ret;
 
 	/* look for aliases; auto-enumerate for free index if not found */
@@ -269,7 +270,14 @@ static int liteuart_probe(struct platform_device *pdev)
 	port = &uart->port;
 
 	/* get membase */
-	port->membase = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(&pdev->dev, "memory resource not found");
+		return -EINVAL;
+	}
+
+	port->membase = devm_ioremap(&pdev->dev, res->start,
+				     resource_size(res));
 	if (!port->membase)
 		return -ENXIO;
 
