@@ -4,12 +4,18 @@
 #include <linux/mod_devicetable.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
+#include <uapi/misc/fcalc.h>
 
 #define FCALC_MAJOR	   140
 #define FCALC_MAX_MINORS   10
 
 struct fcalc_data {
-  struct cdev cdev;
+	struct cdev cdev;
+	int buffer;
+	enum {
+		ADDITION,
+		MULTIPLICATION,
+	} calculation_type;
 };
 
 struct fcalc_data devs[FCALC_MAX_MINORS];
@@ -28,11 +34,7 @@ static int fcalc_open(struct inode *inode, struct file *file) {
 	return 0;
 }
 
-static ssize_t fcalc_read(
-		struct file *file,
-		char __user *buf,
-		size_t count,
-		loff_t *offset) {
+static ssize_t fcalc_read(struct file *file, char __user *buf, size_t count, loff_t *offset) {
 	uint8_t *data = "Hello from the kernel!\n";
 	static bool first_call = true;
 	size_t datalen = strlen(data);
@@ -54,9 +56,35 @@ static ssize_t fcalc_read(
 	return count;
 }
 
+static int fcalc_release(struct inode *inode, struct file *file) {
+	return 0;
+}
+
+static long fcalc_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
+	struct fcalc_data *data = (struct fcalc_data *)file->private_data;
+	struct fcalc_ioctl_data data_in;
+
+	switch (cmd) {
+	case FCALC_IOCTL_IN:
+		if (copy_from_user(&data_in, (struct fcalc_ioctl_data *)arg, 
+						sizeof(struct fcalc_ioctl_data)))
+			return -EFAULT;
+		data->buffer = data_in.value;
+		printk(KERN_ERR "IOCTL successful! Value: %d\n", data->buffer);
+		break;
+	default:
+		return -ENOTTY;
+	}
+
+	return 0;
+}
+
 static const struct file_operations fcalc_fops = {
 	.owner = THIS_MODULE,
 	.read = fcalc_read,
+	.open = fcalc_open,
+	.release = fcalc_release,
+	.unlocked_ioctl = fcalc_ioctl,
 };
 
 static int fcalc_probe(struct platform_device *pdev) {
