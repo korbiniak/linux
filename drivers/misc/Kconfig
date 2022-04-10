@@ -5,6 +5,12 @@
 
 menu "Misc devices"
 
+config FCALC
+  tristate "Framal's calculator cdev driver"
+  depends on OF
+  help
+    This is a simple calculator driver with ioctl calls
+
 config SENSORS_LIS3LV02D
 	tristate
 	depends on INPUT
