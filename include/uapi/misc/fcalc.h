@@ -4,11 +4,18 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 
-struct fcalc_ioctl_data {
-	int value;
+enum fcalc_calc_type {
+	FCALC_ADDITION,
+	FCALC_MULTIPLICATION,
 };
 
-#define FCALC_IOCTL_IN _IOW('w', 1, struct fcalc_ioctl_data)
+union fcalc_ioctl_data {
+	long value;
+	enum fcalc_calc_type calc_type;
+};
 
+#define FCALC_IOCTL_RESET _IO('w', 1)
+#define FCALC_IOCTL_CALC_TYPE _IOW('w', 2, union fcalc_ioctl_data)
+#define FCALC_IOCTL_GET_CALC_TYPE _IOR('w', 3, union fcalc_ioctl_data)
 
 #endif

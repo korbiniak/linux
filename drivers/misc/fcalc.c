@@ -11,11 +11,8 @@
 
 struct fcalc_data {
 	struct cdev cdev;
-	int buffer;
-	enum {
-		ADDITION,
-		MULTIPLICATION,
-	} calculation_type;
+	long buffer;
+	enum fcalc_calc_type calc_type;
 };
 
 struct fcalc_data devs[FCALC_MAX_MINORS];
@@ -28,22 +25,32 @@ static const struct of_device_id fcalc_dt_ids[] = {
 static int fcalc_open(struct inode *inode, struct file *file) {
 	struct fcalc_data *data =
 		container_of(inode->i_cdev, struct fcalc_data, cdev);
-	unsigned int minor = MINOR(inode->i_cdev->dev);
+	// unsigned int minor = MINOR(inode->i_cdev->dev);
 	file->private_data = data;
+
+	data->buffer = 0;
+	data->calc_type = FCALC_ADDITION;
 
 	return 0;
 }
 
-static ssize_t fcalc_read(struct file *file, char __user *buf, size_t count, loff_t *offset) {
-	uint8_t *data = "Hello from the kernel!\n";
-	static bool first_call = true;
-	size_t datalen = strlen(data);
+/* Internal function for conversion from long to str 
+ * Assumes that buf_size is of suitable size.
+ */
+static ssize_t ltostr(long value, char *buf) {
+	return sprintf(buf, "%ld", value);	
+}
 
-	if (first_call == true) {
-		first_call = false;
-	} else {
-		count = 0;
+static ssize_t fcalc_read(struct file *file, char __user *buf, size_t count, loff_t *offset) {
+	char data[30]; 
+	ssize_t datalen;
+	struct fcalc_data *dev_data = (struct fcalc_data *)file->private_data;		
+
+	if (!ltostr(dev_data->buffer, data)) {
+		return 0;
 	}
+
+	datalen = strlen(data);
 
 	if (count > datalen) {
 		count = datalen;
@@ -56,21 +63,75 @@ static ssize_t fcalc_read(struct file *file, char __user *buf, size_t count, lof
 	return count;
 }
 
+static void modify_buffer(struct fcalc_data *data, long value) {
+	switch(data->calc_type) {
+	case FCALC_ADDITION:
+		data->buffer += value;
+		break;	
+	case FCALC_MULTIPLICATION:
+		data->buffer *= value;
+		break;
+	default:
+		printk(KERN_ERR"WTF? Default modify_buffer, this \
+				shouldn't ever happen.");
+		break;
+	}
+}
+
+static ssize_t fcalc_write(struct file *file, const char __user *buf, size_t count, loff_t *offset) {
+	struct fcalc_data *data = (struct fcalc_data*)file->private_data;
+	long value;
+	
+	if (kstrtol_from_user(buf, count, 10, &value)) {
+		return -EFAULT;
+	}
+	
+	modify_buffer(data, value);
+
+	return count;
+}
+
 static int fcalc_release(struct inode *inode, struct file *file) {
 	return 0;
 }
 
+/* Checks if type given in FCALC_IOCTL_CALC_TYPE is a correct calc type */
+static bool check_ioctl_calc_type(int x) {
+	const int E[] = {FCALC_ADDITION, FCALC_MULTIPLICATION};
+	int i;
+	
+	for (i = 0; i < sizeof(E) / sizeof(*E); i++) {
+		if (E[i] == x)
+			return true;
+	}
+
+	return false;
+}
+
 static long fcalc_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
 	struct fcalc_data *data = (struct fcalc_data *)file->private_data;
-	struct fcalc_ioctl_data data_in;
+	union fcalc_ioctl_data data_in;
 
 	switch (cmd) {
-	case FCALC_IOCTL_IN:
-		if (copy_from_user(&data_in, (struct fcalc_ioctl_data *)arg, 
-						sizeof(struct fcalc_ioctl_data)))
+	case FCALC_IOCTL_RESET:
+		data->buffer = 0;
+		break;
+	case FCALC_IOCTL_GET_CALC_TYPE:
+		if (copy_to_user((union fcalc_ioctl_data *)arg, &data->calc_type,
+				sizeof(data->calc_type))) {
 			return -EFAULT;
-		data->buffer = data_in.value;
-		printk(KERN_ERR "IOCTL successful! Value: %d\n", data->buffer);
+		}
+		break;
+	case FCALC_IOCTL_CALC_TYPE:
+		if (copy_from_user(&data_in, (union fcalc_ioctl_data *)arg,
+					sizeof(union fcalc_ioctl_data))) {
+			return -EFAULT;
+		}
+		if (!check_ioctl_calc_type(data_in.calc_type)) {
+			return -EINVAL;
+		}
+		printk(KERN_ERR "Calc type successful!");
+		data->calc_type = data_in.calc_type;
 		break;
 	default:
 		return -ENOTTY;
@@ -83,16 +144,17 @@ static const struct file_operations fcalc_fops = {
 	.owner = THIS_MODULE,
 	.read = fcalc_read,
 	.open = fcalc_open,
+	.write = fcalc_write,
 	.release = fcalc_release,
 	.unlocked_ioctl = fcalc_ioctl,
 };
 
 static int fcalc_probe(struct platform_device *pdev) {
-	printk(KERN_ERR"Probing my awesome driver!! :DDDDD\n");
-
 	int i, err;
+
+	printk(KERN_ERR"Probing my awesome driver!! :DDDDD\n");
 	err = register_chrdev_region(MKDEV(FCALC_MAJOR, 0), FCALC_MAX_MINORS,
-				  "fcalc");
+								"fcalc");
 
 	if (err != 0) {
 		printk(KERN_ERR"Error %d\n", err);
@@ -111,9 +173,9 @@ static int fcalc_probe(struct platform_device *pdev) {
 }
 
 static int fcalc_remove(struct platform_device *pdev) {
-	printk(KERN_ERR":(\n");
-
 	int i;
+
+	printk(KERN_ERR":(\n");
 	for (i = 0; i < FCALC_MAX_MINORS; i++) {
 		cdev_del(&devs[i].cdev);
 	}
