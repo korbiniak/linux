@@ -6,16 +6,19 @@
 
 enum fcalc_calc_type {
 	FCALC_ADDITION,
+	FCALC_SUBSTRACTION,
 	FCALC_MULTIPLICATION,
+	FCALC_DIVISION,
 };
 
-union fcalc_ioctl_data {
-	long value;
-	enum fcalc_calc_type calc_type;
+enum fcalc_status {
+	FCALC_OK,
+	FCALC_DIV_BY_ZERO,
+	FCALC_INVALID_OPERATION,
 };
 
 #define FCALC_IOCTL_RESET _IO('w', 1)
-#define FCALC_IOCTL_CALC_TYPE _IOW('w', 2, union fcalc_ioctl_data)
-#define FCALC_IOCTL_GET_CALC_TYPE _IOR('w', 3, union fcalc_ioctl_data)
+#define FCALC_IOCTL_CALC_TYPE _IOW('w', 2, enum fcalc_calc_type)
+#define FCALC_IOCTL_GET_STATUS _IOR('w', 3, enum fcalc_calc_type)
 
 #endif
