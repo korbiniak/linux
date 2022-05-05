@@ -4,7 +4,7 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 
-enum fcalc_calc_type {
+enum fcalc_op_type {
 	FCALC_ADDITION,
 	FCALC_SUBSTRACTION,
 	FCALC_MULTIPLICATION,
@@ -18,7 +18,7 @@ enum fcalc_status {
 };
 
 #define FCALC_IOCTL_RESET _IO('w', 1)
-#define FCALC_IOCTL_CALC_TYPE _IOW('w', 2, enum fcalc_calc_type)
-#define FCALC_IOCTL_GET_STATUS _IOR('w', 3, enum fcalc_calc_type)
+#define FCALC_IOCTL_SET_OP_TYPE _IOW('w', 2, enum fcalc_op_type)
+#define FCALC_IOCTL_GET_STATUS _IOR('w', 3, enum fcalc_status)
 
 #endif

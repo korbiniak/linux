@@ -10,6 +10,9 @@
 #define FCALC_MAJOR	   140
 #define FCALC_MAX_MINORS   10
 
+/*****************************************************************************/
+/* fcalc_periph.py device offsets ********************************************/
+
 #define STATUS_REG_OFFSET		0x00
 #define OPERATION_REG_OFFSET		0x04
 #define DAT0_REG_OFFSET			0x08
@@ -25,11 +28,24 @@
 #define STATUS_INVALID_OPERATION	(1 << 0)
 #define STATUS_DIV_BY_ZERO		(1 << 1)
 
+/*****************************************************************************/
+/* Private data - one instance per minor *************************************/
+
 struct fcalc_data {
 	struct cdev cdev;
 	void *mem_base;
 	bool write_to_dat0;
 };
+
+struct fcalc_data devs[FCALC_MAX_MINORS];
+
+static const struct of_device_id fcalc_dt_ids[] = {
+	{ .compatible = "uwr,fcalc" },
+	{}
+};
+
+/*****************************************************************************/
+/* Auxilary functions ********************************************************/
 
 static inline void write_device_register(u32 value, void __iomem *addr) {
 	writel((u32 __force)cpu_to_le32(value), addr);
@@ -39,7 +55,7 @@ static inline u32 read_device_register(void __iomem *addr) {
 	return le32_to_cpu((__le32 __force)readl(addr));
 }
 
-static void set_device_op(enum fcalc_calc_type op_type, void __iomem *base) {
+static void set_device_op(enum fcalc_op_type op_type, void __iomem *base) {
 	write_device_register((1 << (int)op_type), base + OPERATION_REG_OFFSET);
 }
 
@@ -52,7 +68,8 @@ static void set_dat1_reg(u32 value, void __iomem *base) {
 }
 
 static void clear_status_reg(void __iomem *base) {
-	write_device_register(0, base + STATUS_REG_OFFSET);
+	write_device_register(STATUS_INVALID_OPERATION | STATUS_DIV_BY_ZERO,
+		       base + STATUS_REG_OFFSET);
 }
 
 static u32 get_result_reg(void __iomem *base) {
@@ -63,37 +80,22 @@ static u32 get_status_reg(void __iomem *base) {
 	return read_device_register(base + STATUS_REG_OFFSET);
 }
 
-static u32 get_operation_reg(void __iomem *base) {
-	return read_device_register(base + OPERATION_REG_OFFSET);
+static void reset_device(struct fcalc_data *data) {
+	set_dat0_reg(0, data->mem_base);
+	set_dat1_reg(0, data->mem_base);
+	clear_status_reg(data->mem_base);
+	data->write_to_dat0 = true;
 }
 
-static void reset_device(void __iomem *base) {
-	set_dat0_reg(0, base);
-	set_dat1_reg(0, base);
-	clear_status_reg(base);
-}
-
-struct fcalc_data devs[FCALC_MAX_MINORS];
-
-static const struct of_device_id fcalc_dt_ids[] = {
-	{ .compatible = "uwr,fcalc" },
-	{}
-};
+/*****************************************************************************/
+/* File operations ***********************************************************/
 
 static int fcalc_open(struct inode *inode, struct file *file) {
 	struct fcalc_data *data =
 		container_of(inode->i_cdev, struct fcalc_data, cdev);
-	// unsigned int minor = MINOR(inode->i_cdev->dev);
 	file->private_data = data;
 
 	return 0;
-}
-
-/* Internal function for conversion from long to str 
- * Assumes that buf_size is of suitable size.
- */
-static ssize_t ltostr(long value, char *buf) {
-	return sprintf(buf, "%ld", value);	
 }
 
 static ssize_t fcalc_read(struct file *file, char __user *buf, size_t count, loff_t *offset) {
@@ -102,7 +104,7 @@ static ssize_t fcalc_read(struct file *file, char __user *buf, size_t count, lof
 	struct fcalc_data *dev_data = (struct fcalc_data *)file->private_data;		
 	
 	u32 result = get_result_reg(dev_data->mem_base);
-	ltostr(result, data);
+	sprintf(data, "%ld", (long)result);
 	datalen = strlen(data);
 
 	if (count > datalen) {
@@ -140,32 +142,14 @@ static int fcalc_release(struct inode *inode, struct file *file) {
 	return 0;
 }
 
-/* Checks if type given in FCALC_IOCTL_CALC_TYPE is a correct calc type */
-static bool check_ioctl_calc_type(int x) {
-	const int E[] = { 
-		FCALC_ADDITION, 
-		FCALC_SUBSTRACTION, 
-		FCALC_MULTIPLICATION,
-		FCALC_DIVISION
-	};
-	int i;
-	
-	for (i = 0; i < sizeof(E) / sizeof(*E); i++) {
-		if (E[i] == x)
-			return true;
-	}
-
-	return false;
-}
-
 static long fcalc_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
 	struct fcalc_data *data = (struct fcalc_data *)file->private_data;
 	enum fcalc_status status;
-	enum fcalc_calc_type op_type;
+	enum fcalc_op_type op_type;
 
 	switch (cmd) {
 	case FCALC_IOCTL_RESET:
-		reset_device(data->mem_base);
+		reset_device(data);
 		break;
 	case FCALC_IOCTL_GET_STATUS:
 		status = get_status_reg(data->mem_base);
@@ -174,16 +158,16 @@ static long fcalc_ioctl(struct file *file, unsigned int cmd, unsigned long arg) 
 			return -EFAULT;
 		}
 		break;
-	case FCALC_IOCTL_CALC_TYPE:
-		if (copy_from_user(&op_type, (enum fcalc_calc_type *)arg,
-					sizeof(enum fcalc_calc_type))) {
+	case FCALC_IOCTL_SET_OP_TYPE:
+		if (copy_from_user(&op_type, (enum fcalc_op_type *)arg,
+					sizeof(enum fcalc_op_type))) {
 			return -EFAULT;
 		}
-		if (!check_ioctl_calc_type(op_type)) {
-			return -EINVAL;
+
+		/* Set the operation only if the device is in OK state */
+		if (get_status_reg(data->mem_base) == STATUS_OK) {
+			set_device_op(op_type, data->mem_base);
 		}
-		printk(KERN_ERR "Calc type successful!");
-		set_device_op(op_type, data->mem_base);
 		break;
 	default:
 		return -ENOTTY;
@@ -201,12 +185,15 @@ static const struct file_operations fcalc_fops = {
 	.unlocked_ioctl = fcalc_ioctl,
 };
 
+/*****************************************************************************/
+/* Driver functions **********************************************************/
+
 static int fcalc_probe(struct platform_device *pdev) {
 	int i, err;
 	struct resource *res;
 	void *base;
 
-	printk(KERN_ERR"Probing my awesome driver!! :DDDDD\n");
+	printk(KERN_ERR"Probing fcalc driver.\n");
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	base = devm_ioremap_resource(&pdev->dev, res);
@@ -236,7 +223,7 @@ static int fcalc_probe(struct platform_device *pdev) {
 static int fcalc_remove(struct platform_device *pdev) {
 	int i;
 
-	printk(KERN_ERR":(\n");
+	printk(KERN_ERR"Removing fcalc driver.\n");
 	for (i = 0; i < FCALC_MAX_MINORS; i++) {
 		cdev_del(&devs[i].cdev);
 	}
@@ -256,13 +243,13 @@ static struct platform_driver fcalc = {
 
 static int __init fcalc_init(void)
 {
-	printk(KERN_ERR"Hello World!\n");
+	printk(KERN_ERR"Initializing fcalc driver.\n");
 	return platform_driver_register(&fcalc);
 }
 
 static void __exit fcalc_exit(void)
 {
-	pr_info("Goodbye!\n");
+	pr_info("Exiting fcalc driver.\n");
 	platform_driver_unregister(&fcalc);
 }
 
