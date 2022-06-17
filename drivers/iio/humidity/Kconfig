@@ -4,6 +4,12 @@
 #
 menu "Humidity sensors"
 
+config SI7021
+	tristate "SI7021 relative humidity and temperature sensor"
+	depends on I2C
+	help
+	  Lmao
+
 config AM2315
 	tristate "Aosong AM2315 relative humidity and temperature sensor"
 	depends on I2C
