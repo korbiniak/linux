@@ -4,6 +4,12 @@
 #
 menu "Temperature sensors"
 
+config MAX6682
+	tristate "max6682 SPI temperature sensor"	
+	depends on SPI
+	help
+	  max6682 SPI temperature sensor
+
 config IQS620AT_TEMP
 	tristate "Azoteq IQS620AT temperature sensor"
 	depends on MFD_IQS62X || COMPILE_TEST
